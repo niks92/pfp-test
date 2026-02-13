@@ -266,17 +266,78 @@ This provisions:
 
 ### 2. CI/CD (GitHub Actions — automated on every push)
 
-The deploy pipeline uses **Workload Identity Federation** (keyless auth). Set these GitHub secrets:
+#### Workload Identity Federation (WIF)
 
-| Secret | Description |
-|--------|-------------|
-| `GCP_PROJECT_ID` | Your GCP project ID |
-| `WIF_PROVIDER` | Workload Identity Provider resource name |
-| `WIF_SERVICE_ACCOUNT` | Service account email for GitHub Actions |
+The deploy pipeline authenticates to GCP using **Workload Identity Federation** — a keyless approach where GitHub Actions exchanges its OIDC token for short-lived GCP credentials. No service account keys are stored in GitHub.
+
+How it works:
+
+```
+GitHub Actions (OIDC token)
+    └──▶ GCP Workload Identity Pool (validates token)
+            └──▶ GCP Service Account (impersonated, short-lived credentials)
+                    └──▶ Artifact Registry, Cloud Run (deploy)
+```
+
+To set this up:
+
+```bash
+export GCP_PROJECT=<your-gcp-project-id>
+export GCP_PROJECT_NUMBER=$(gcloud projects describe $GCP_PROJECT --format="value(projectNumber)")
+export REPO="niks92/pfp-test"  # your GitHub org/repo
+
+# 1. Create a Workload Identity Pool
+gcloud iam workload-identity-pools create github-pool \
+  --location="global" \
+  --display-name="GitHub Actions Pool" \
+  --project=$GCP_PROJECT
+
+# 2. Create an OIDC provider linked to GitHub
+gcloud iam workload-identity-pools providers create-oidc github-provider \
+  --location="global" \
+  --workload-identity-pool="github-pool" \
+  --issuer-uri="https://token.actions.githubusercontent.com" \
+  --attribute-mapping="google.subject=assertion.sub,attribute.repository=assertion.repository" \
+  --attribute-condition="assertion.repository=='$REPO'" \
+  --project=$GCP_PROJECT
+
+# 3. Allow GitHub Actions to impersonate the Terraform deployer SA
+gcloud iam service-accounts add-iam-policy-binding \
+  terraform-deployer@$GCP_PROJECT.iam.gserviceaccount.com \
+  --role="roles/iam.workloadIdentityUser" \
+  --member="principalSet://iam.googleapis.com/projects/$GCP_PROJECT_NUMBER/locations/global/workloadIdentityPools/github-pool/attribute.repository/$REPO" \
+  --project=$GCP_PROJECT
+
+# 4. Get the full provider resource name
+gcloud iam workload-identity-pools providers describe github-provider \
+  --location="global" \
+  --workload-identity-pool="github-pool" \
+  --project=$GCP_PROJECT \
+  --format="value(name)"
+```
+
+#### GitHub Secrets
+
+Set these three secrets in your GitHub repo (Settings > Secrets > Actions):
+
+| Secret | Description | Example |
+|--------|-------------|---------|
+| `GCP_PROJECT_ID` | Your GCP project ID | `pfp-test-486922` |
+| `WIF_PROVIDER` | Full provider resource name from step 4 | `projects/123.../providers/github-provider` |
+| `WIF_SERVICE_ACCOUNT` | Service account email | `terraform-deployer@pfp-test-486922.iam.gserviceaccount.com` |
+
+```bash
+# Or set via CLI
+gh secret set GCP_PROJECT_ID --body "$GCP_PROJECT"
+gh secret set WIF_PROVIDER --body "<output from step 4>"
+gh secret set WIF_SERVICE_ACCOUNT --body "terraform-deployer@$GCP_PROJECT.iam.gserviceaccount.com"
+```
+
+#### Pipeline flow
 
 On push to `main`:
-1. **CI** — lint + test
-2. **Deploy** — build image, push to Artifact Registry, update Cloud Run job
+1. **CI** — lint + test (runs first)
+2. **Deploy** — only triggers after CI passes. Builds image, pushes to Artifact Registry, updates Cloud Run job
 
 ## File Structure
 
