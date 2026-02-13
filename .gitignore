@@ -1,0 +1,14 @@
+__pycache__/
+*.pyc
+.pytest_cache/
+.coverage
+.ruff_cache/
+.env
+*.egg-info/
+dist/
+.venv/
+terraform/.terraform/
+terraform/*.tfstate*
+terraform/.terraform.lock.hcl
+terraform/sa-key.json
+terraform/terraform.tfvars

@@ -1,0 +1,8 @@
+project_id   = "my-gcp-project"
+region       = "europe-west2"
+db_host      = "10.0.0.3"
+db_name      = "du_chapters"
+db_user      = "etl_user"
+db_password  = "change-me"
+state_filter = "CA"
+schedule     = "0 6 * * *"
